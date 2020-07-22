@@ -1,14 +1,14 @@
-Package: ExcelProteomicsImport
+Package: ExcelProteomicsImporter
 Type: Package
-Title: ExcelProteomicsImport
+Title: ExcelProteomicsImporter
 Version: 1.0.0
 Date: 2020-07-22
 Author: Paul Shannon
 Maintainer: Paul Shannon<pshannon@systemsbiology.org>
 Imports:
    org.Hs.eg.db
-Description: translate Paulovich lab standard excel experimental data into usable form
+Description: translate standard Paulovich lab  excel experimental data into usable data structure
 Depends: R (>= 3.5.0)
 License: Artistic-2.0
 Encoding: UTF-8
-RoxygenNote: 7.1.0
+RoxygenNote: 7.1.1
