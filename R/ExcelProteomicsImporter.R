@@ -1,4 +1,5 @@
 #' @import org.Hs.eg.db
+#' @import yaml
 #' @importFrom methods new
 #'
 #' @title ExcelProteomicsImporter
@@ -11,6 +12,7 @@
 
 .ExcelProteomicsImporter <- setClass("ExcelProteomicsImporter",
                           representation = representation(
+                             filename="character",
                              rawTable="data.frame",
                              state="environment"
                              )
@@ -21,6 +23,9 @@ setGeneric('validateColumnNames', signature='obj', function(obj) standardGeneric
 setGeneric('getGroupCount', signature='obj', function(obj) standardGeneric ('getGroupCount'))
 setGeneric('identifyGroupBoundaries', signature='obj', function(obj) standardGeneric ('identifyGroupBoundaries'))
 setGeneric('getGroupBoundaries', signature='obj', function(obj) standardGeneric ('getGroupBoundaries'))
+setGeneric('getConditionColnames', signature='obj', function(obj) standardGeneric ('getConditionColnames'))
+setGeneric('conditionToYAMLreadyList', signature='obj', function(obj, colname) standardGeneric ('conditionToYAMLreadyList'))
+setGeneric('toYAML', signature='obj', function(obj) standardGeneric ('toYAML'))
 #------------------------------------------------------------------------------------------------------------------------
 #' Create a ExcelProteomicsImporter connection
 #'
@@ -36,8 +41,11 @@ ExcelProteomicsImporter <- function(tabDelimitedFilename)
 {
    state <- new.env(parent=emptyenv())
    stopifnot(file.exists(tabDelimitedFilename))
-   tbl.raw <- read.table(tabDelimitedFilename, sep="\t", header=TRUE, as.is=TRUE)
-   .ExcelProteomicsImporter(rawTable=tbl.raw, state=state)
+   tbl.raw <- read.table(tabDelimitedFilename, sep="\t", header=TRUE, as.is=TRUE, check.names=FALSE)
+   obj <- .ExcelProteomicsImporter(filename=tabDelimitedFilename, rawTable=tbl.raw, state=state)
+   validateColumnNames(obj)
+   identifyGroupBoundaries(obj)
+   obj
 
 } # ctor
 #------------------------------------------------------------------------------------------------------------------------
@@ -67,23 +75,20 @@ setMethod('validateColumnNames', 'ExcelProteomicsImporter',
      function(obj){
         tbl <- obj@rawTable
         colnames <- colnames(tbl)
-        stopifnot("PeptideLabel" %in% colnames | "Peptide.Label" %in% colnames)
+        stopifnot("PeptideLabel" %in% colnames | "Peptide Label" %in% colnames)
         if("PeptideLabel" %in% colnames)
             analytes <- tbl$PeptideLabel
-        if("Peptide.Label" %in% colnames)
-            analytes <- tbl[, "Peptide.Label"]
+        if("Peptide Label" %in% colnames)
+            analytes <- tbl[, "Peptide Label"]
 
         stopifnot(length(unique(analytes)) == nrow(tbl))
 
-        stopifnot(any(grepl("avg", colnames)))
-        stopifnot(any(grepl("stdev", colnames)))
+             # just one "avg" and one "stdev" column allowed
         avg.cols <- grep("avg", colnames)
         sd.cols  <- grep("stdev", colnames)
-        stopifnot(length(avg.cols) == length(sd.cols))
-
-        groupCount <- length(avg.cols)   # expect 1 or 2
-        stopifnot(groupCount %in% c(1,2))
-        obj@state$groupCount <- groupCount
+        stopifnot(length(avg.cols) == 1)
+        stopifnot(length(sd.cols) == 1)
+        obj@state$groupCount <- 1         # remnant of abandoned support for multiple groups
         return(TRUE)
         })
 
@@ -98,20 +103,20 @@ setMethod('validateColumnNames', 'ExcelProteomicsImporter',
 setMethod('identifyGroupBoundaries', 'ExcelProteomicsImporter',
 
      function(obj){
-        colnames <- colnames(obj@state$rawTable)
+        colnames <- colnames(obj@rawTable)
         avg.cols <- grep("avg", colnames)
         sd.cols  <- grep("stdev", colnames)
         if(obj@state$groupCount == 1){
-           obj@stage$group.1.avg <- c(avg.cols[1] + 1, sd.cols[1] - 1)
-           obj@stage$group.1.sd  <- c(sd.cols[1] + 1, length(colnames))
-           obj@stage$group.2.avg <- NA
-           obj@stage$group.2.sd <- NA
+           obj@state$group.1.avg <- c(avg.cols[1] + 1, sd.cols[1] - 1)
+           obj@state$group.1.sd  <- c(sd.cols[1] + 1, length(colnames))
+           obj@state$group.2.avg <- NA
+           obj@state$group.2.sd <- NA
            }
         if(obj@state$groupCount == 2){
-           obj@stage$group.1.avg <- c(avg.cols[1] + 1, avg.cols[2] - 1)
-           obj@stage$group.1.sd  <- c(sd.cols[1] + 1,  sd.cols[2] - 1)
-           obj@stage$group.2.avg <- c(avg.cols[2] + 1, sd.cols[1] - 1)
-           obj@stage$group.2.sd <-  c(sd.cols[2] + 1,  length(colnames))
+           obj@state$group.1.avg <- c(avg.cols[1] + 1, avg.cols[2] - 1)
+           obj@state$group.1.sd  <- c(sd.cols[1] + 1,  sd.cols[2] - 1)
+           obj@state$group.2.avg <- c(avg.cols[2] + 1, sd.cols[1] - 1)
+           obj@state$group.2.sd <-  c(sd.cols[2] + 1,  length(colnames))
            }
         }) # identifyGroupBoundaries
 
@@ -126,7 +131,7 @@ setMethod('identifyGroupBoundaries', 'ExcelProteomicsImporter',
 setMethod('getGroupCount', 'ExcelProteomicsImporter',
 
      function(obj){
-        obj@stage$groupCount
+        obj@state$groupCount
         })
 
 #------------------------------------------------------------------------------------------------------------------------
@@ -140,10 +145,91 @@ setMethod('getGroupCount', 'ExcelProteomicsImporter',
 setMethod('getGroupBoundaries', 'ExcelProteomicsImporter',
 
      function(obj){
-         list(avg.1=obj@stage$group.1.avg,
-              avg.2=obj@stage$group.2.avg,
-              sd.1 =obj@stage$group.1.sd,
-              sd.2 =obj@stage$group.2.sd)
+         list(avg.1=obj@state$group.1.avg,
+              avg.2=obj@state$group.2.avg,
+              sd.1 =obj@state$group.1.sd,
+              sd.2 =obj@state$group.2.sd)
+        })
+
+#------------------------------------------------------------------------------------------------------------------------
+#' getConditionColnames
+#'
+#' @rdname getConditionColnames
+#' @aliases getConditionColnames
+#'
+#' @export
+#'
+setMethod('getConditionColnames', 'ExcelProteomicsImporter',
+
+     function(obj){
+        col.start <-  obj@state$group.1.avg[1]
+        col.end <-  obj@state$group.1.avg[2]
+        colnames(obj@rawTable)[col.start:col.end]
+        })
+
+#------------------------------------------------------------------------------------------------------------------------
+#' conditionToYAMLreadyList
+#'
+#' @rdname conditionToYAMLreadyList
+#' @aliases conditionToYAMLreadyList
+#'
+#' @export
+#'
+setMethod('conditionToYAMLreadyList', 'ExcelProteomicsImporter',
+
+    function(obj, colname){
+       string.is.numeric <- function(string){
+          tryCatch(expr = is.numeric(as.numeric(string)), warning = function(w) {return(FALSE)})
+          }
+       sample.name = colname
+       tokens <-  strsplit(colname, split="\\+|_")[[1]]
+       sample.type <- tokens[1]
+       elements <- tokens[-1]
+       elementCount <- 0
+       treatments <- list()
+       last.element <- elements[length(elements)]
+       for(el in elements[-(length(elements))]){
+           elementCount <- elementCount + 1
+           if(grepl("Gy", el)){
+               name <- "radiation"
+               level <- as.numeric(sub("Gy", "", el))
+               units <- "Gy"
+           } else {
+               name <- el
+               level <- ''
+               units <- ''
+           }
+           treatments[[elementCount]] <- list(name=name, level=level, units=units)
+           } # for el
+          # now work on the last element
+       elementCount <- elementCount + 1
+       if(string.is.numeric(last.element)){ # assume this is time, and units are hours?
+          timepoint <- as.numeric(last.element)
+          treatments[[elementCount]] <- list(name="time", level=timepoint, units="hours")
+       } else {
+          treatments[[elementCount]] <- list(name=last.element, level="", units="")
+          }
+       list(name=sample.name, sampleType=sample.type, treatments=treatments)
+       }) # conditionToYAMLreadyList
+
+#------------------------------------------------------------------------------------------------------------------------
+#' get the matrix of averages
+#'
+#' @rdname toYAML
+#' @aliases toYAML
+#'
+#' @export
+#'
+setMethod('toYAML', 'ExcelProteomicsImporter',
+
+     function(obj){
+         colnames <- getConditionColnames(obj)
+         conditionLists <- lapply(colnames, function(colname) conditionToYAMLreadyList(obj, colname))
+         sample.name <- strsplit(colnames[1], "_")[[1]][1]  # first token relaibly the sample name
+         list(filename=obj@filename,
+              sample=sample.name,
+              mutation="",
+              conditions=conditionLists)
         })
 
 #------------------------------------------------------------------------------------------------------------------------

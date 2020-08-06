@@ -1,8 +1,8 @@
 Package: ExcelProteomicsImporter
 Type: Package
 Title: ExcelProteomicsImporter
-Version: 1.0.0
-Date: 2020-07-22
+Version: 1.0.1
+Date: 2020-08-05
 Author: Paul Shannon
 Maintainer: Paul Shannon<pshannon@systemsbiology.org>
 Imports:
